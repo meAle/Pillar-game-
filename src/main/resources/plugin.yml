@@ -1,0 +1,19 @@
+name: MiniGames
+version: '${version}'
+main: com.pirro.minigames.plugin.MiniGames
+api-version: '1.21.11'
+load: POSTWORLD
+author: Pirro
+description: A ready-based, multi-phase random-item pillar game.
+commands:
+  minigames:
+    description: Ready up, restart, or administer the pillar game.
+    usage: /minigames <ready|restart|forcestart|give|feather>
+    aliases: [mg]
+  ready:
+    description: Toggle whether you are ready for the next match.
+    usage: /ready
+permissions:
+  minigames.admin:
+    description: Allows restarting, force-starting, and force-giving game items.
+    default: op

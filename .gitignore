@@ -1,0 +1,25 @@
+# IntelliJ
+.idea/
+*.iml
+out/
+
+# Gradle
+.gradle/
+build/
+
+# Development server
+run/
+logs/
+crash-reports/
+
+# Minecraft worlds
+world/
+world_nether/
+world_the_end/
+
+# Generated plugin data
+results.yml
+
+# Operating system
+.DS_Store
+Thumbs.db

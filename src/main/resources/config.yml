@@ -1,0 +1,62 @@
+# The plugin will create this dedicated world. If a world with this name already
+# exists and was not created by MiniGames, startup is refused to protect it.
+world:
+  name: oneblock_void
+
+# The eight pillars are spaced evenly around a circle. bedrock-height controls
+# the support below the permanent bedrock block players stand on at top-y.
+pillars:
+  top-y: 96
+  radius: 32
+  bedrock-height: 8
+
+# Five phases run for 70 seconds each, except the final phase, which continues
+# until one player remains. Item intervals are 15, 12.5, 10, 7.5, and 5 seconds.
+# Each interval gives one random item to every surviving player.
+rounds:
+  count: 5
+  duration-seconds: 70
+  first-item-interval-seconds: 15.0
+  item-interval-reduction-seconds: 2.5
+
+# Phase 2 grants a Double Jump feather (one extra airborne jump). Phase 3
+# replaces it with a Triple Jump feather (two extra airborne jumps).
+abilities:
+  double-jump-round: 2
+  triple-jump-round: 3
+  jump-velocity: 0.65
+  jump-forward-velocity: 0.85
+  click-cooldown-ticks: 4
+
+# Every match uses 3 lives. Before a game begins, players toggle readiness with
+# the lobby dye or /ready. The match starts when at least two-thirds are ready.
+
+# Every player in the pillar world receives one independently selected item at
+# every item interval. Both blocks and non-block items are included. Names may
+# include the minecraft: namespace or omit it.
+random-items:
+  excluded:
+    - air
+    - bedrock
+    - barrier
+    - command_block
+    - chain_command_block
+    - repeating_command_block
+    - command_block_minecart
+    - structure_block
+    - structure_void
+    - jigsaw
+    - light
+    - debug_stick
+    - knowledge_book
+    - end_portal_frame
+    - reinforced_deepslate
+    - spawner
+    - trial_spawner
+    - vault
+    - test_block
+    - test_instance_block
+
+# Outside an active phase, players who fall are returned to their pillar. During
+# a phase, crossing below Y=0 consumes one of their three lives.
+rescue-from-void: true
