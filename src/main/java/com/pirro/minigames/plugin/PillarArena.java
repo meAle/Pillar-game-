@@ -21,6 +21,8 @@ import org.bukkit.event.block.BlockSpreadEvent;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.util.Vector;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.LivingEntity;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -39,6 +41,7 @@ import java.util.UUID;
 final class PillarArena implements Listener {
     private static final int PILLAR_COUNT = 8;
     private static final int[] SLOT_ORDER = {0, 4, 2, 6, 1, 5, 3, 7};
+    private static final double SAFE_SPAWN_RADIUS_SQUARED = 10.0 * 10.0;
 
     private final World world;
     private final GameSettings settings;
@@ -145,6 +148,49 @@ final class PillarArena implements Listener {
         if (protectedPillarBlocks.contains(BlockPosition.of(event.getBlock()))) {
             event.setCancelled(true);
         }
+    }
+
+    /**
+     * Reassigns a respawning player to the pillar with the fewest nearby living
+     * entities. When several pillars are clear, the one furthest from the
+     * nearest player or mob wins the tie.
+     */
+    Location safestRespawnLocation(UUID playerId) {
+        List<Entity> otherLivingEntities = world.getEntities().stream()
+                .filter(Entity::isValid)
+                .filter(entity -> entity instanceof LivingEntity)
+                .filter(entity -> !entity.getUniqueId().equals(playerId))
+                .toList();
+
+        int safestSlot = SLOT_ORDER[0];
+        int fewestNearby = Integer.MAX_VALUE;
+        double greatestNearestDistance = -1.0;
+
+        for (int slot : SLOT_ORDER) {
+            Location candidate = spawnLocation(slot);
+            int nearbyCount = 0;
+            double nearestDistance = Double.POSITIVE_INFINITY;
+
+            for (Entity entity : otherLivingEntities) {
+                double distanceSquared = entity.getLocation().distanceSquared(candidate);
+                if (distanceSquared <= SAFE_SPAWN_RADIUS_SQUARED) {
+                    nearbyCount++;
+                }
+                nearestDistance = Math.min(nearestDistance, distanceSquared);
+            }
+
+            if (nearbyCount < fewestNearby
+                    || (nearbyCount == fewestNearby && nearestDistance > greatestNearestDistance)) {
+                safestSlot = slot;
+                fewestNearby = nearbyCount;
+                greatestNearestDistance = nearestDistance;
+            }
+        }
+
+        synchronized (assignmentLock) {
+            assignments.put(playerId, safestSlot);
+        }
+        return spawnLocation(safestSlot);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)

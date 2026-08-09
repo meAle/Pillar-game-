@@ -137,6 +137,7 @@ final class PillarGame implements Listener {
         jumpFeathers.reset();
         luckyBlocks.stop();
         centerLootChest.stop();
+        droppedItemDespawn.close();
         playerLives.reset();
         phaseBossBar.hideFromAll();
         sidebar.clear();
@@ -252,7 +253,7 @@ final class PillarGame implements Listener {
             return;
         }
 
-        event.setRespawnLocation(arena.spawnLocation(arena.assignSlot(player.getUniqueId())));
+        event.setRespawnLocation(arena.safestRespawnLocation(player.getUniqueId()));
         plugin.getServer().getScheduler().runTask(plugin, () -> restoreAfterRespawn(player));
     }
 
