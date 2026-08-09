@@ -79,7 +79,7 @@ final class PillarGame implements Listener {
         this.phaseBossBar = new PhaseBossBar(world, settings);
         this.playerLives = new PlayerLifeManager(LIVES_PER_GAME);
         this.luckyBlocks = new LuckyBlockService(plugin, world, arena.luckyBlockLocations(), items);
-        this.centerLootChest = new CenterLootChestService(world, settings);
+        this.centerLootChest = new CenterLootChestService(world, arena.luckyBlockLocations(), luckyBlocks);
         this.droppedItemDespawn = new DroppedItemDespawnService(plugin, world);
         this.enderDragonMovement = new EnderDragonMovementService(
                 plugin, world, settings, () -> gameStarted && !gameFinished);

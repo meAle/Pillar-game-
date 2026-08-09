@@ -11,7 +11,7 @@ A Paper Minecraft minigame where players battle from bedrock pillars while recei
 - Three lives per player
 - Double Jump unlocks in phase 2 and upgrades to Triple Jump in phase 3
 - Lucky blocks that respawn on top of each pillar
-- Random building blocks in a protected center chest
+- Random combat loot and building blocks in a protected chest on a random pillar
 - Phase countdown boss bar and player sidebar
 - Persistent wins, current streaks, and best streaks
 - Automatic cleanup between matches

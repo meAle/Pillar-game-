@@ -21,24 +21,30 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.IntStream;
 
 /**
- * Creates and fills the protected loot chest at the center of the arena.
+ * Creates and fills a protected loot chest on one random pillar per match.
  */
 final class CenterLootChestService implements Listener {
     private final World world;
-    private final BlockPosition chestPosition;
-    private final BlockPosition supportPosition;
+    private final List<Location> pillarLocations;
+    private final LuckyBlockService luckyBlocks;
 
     private boolean active;
+    private BlockPosition chestPosition;
 
-    CenterLootChestService(World world, GameSettings settings) {
+    CenterLootChestService(World world, List<Location> pillarLocations, LuckyBlockService luckyBlocks) {
         this.world = world;
-        this.chestPosition = new BlockPosition(0, settings.pillarTopY() + 1, 0);
-        this.supportPosition = new BlockPosition(0, settings.pillarTopY(), 0);
+        this.pillarLocations = List.copyOf(pillarLocations);
+        this.luckyBlocks = luckyBlocks;
+        if (this.pillarLocations.isEmpty()) {
+            throw new IllegalArgumentException("At least one pillar location is required for the loot chest.");
+        }
     }
 
     void start() {
         active = true;
-        blockAt(supportPosition).setType(Material.BEDROCK, false);
+        Location selected = pillarLocations.get(ThreadLocalRandom.current().nextInt(pillarLocations.size()));
+        chestPosition = BlockPosition.of(selected);
+        luckyBlocks.reserveLocation(selected);
         Block chestBlock = blockAt(chestPosition);
         chestBlock.setType(Material.CHEST, false);
         if (chestBlock.getState() instanceof Chest chest) {
@@ -48,12 +54,17 @@ final class CenterLootChestService implements Listener {
 
     void stop() {
         active = false;
+        if (chestPosition == null) {
+            luckyBlocks.clearReservedLocation();
+            return;
+        }
         Block chestBlock = blockAt(chestPosition);
         if (chestBlock.getState() instanceof Chest chest) {
             chest.getBlockInventory().clear();
         }
         chestBlock.setType(Material.AIR, false);
-        blockAt(supportPosition).setType(Material.AIR, false);
+        chestPosition = null;
+        luckyBlocks.clearReservedLocation();
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -112,9 +123,9 @@ final class CenterLootChestService implements Listener {
             int amount = typesRemaining == 1
                     ? blocksRemaining
                     : ThreadLocalRandom.current().nextInt(
-                            4,
-                            blocksRemaining - 4 * (typesRemaining - 1) + 1
-                    );
+                    4,
+                    blocksRemaining - 4 * (typesRemaining - 1) + 1
+            );
             blocks.setAmount(amount);
             blocksRemaining -= amount;
             inventory.setItem(slots.removeLast(), blocks);
@@ -126,7 +137,7 @@ final class CenterLootChestService implements Listener {
             return false;
         }
         BlockPosition position = BlockPosition.of(block);
-        return position.equals(chestPosition) || position.equals(supportPosition);
+        return position.equals(chestPosition);
     }
 
     private Block blockAt(BlockPosition position) {
@@ -136,6 +147,10 @@ final class CenterLootChestService implements Listener {
     private record BlockPosition(int x, int y, int z) {
         private static BlockPosition of(Block block) {
             return new BlockPosition(block.getX(), block.getY(), block.getZ());
+        }
+
+        private static BlockPosition of(Location location) {
+            return new BlockPosition(location.getBlockX(), location.getBlockY(), location.getBlockZ());
         }
     }
 }
