@@ -102,9 +102,13 @@ final class PillarGamePlayerListener implements Listener {
     public void onDeath(PlayerDeathEvent event) {
         Player player = event.getPlayer();
         game.jumpFeathers().clearState(player);
-        event.getDrops().removeIf(game.jumpFeathers()::isJumpFeather);
         if (game.isRoundAlive(player)) {
+            // Dying mid-match shouldn't cost a player their loot on top of a life.
+            event.setKeepInventory(true);
+            event.getDrops().clear();
             game.consumeLife(player, "died", true);
+        } else {
+            event.getDrops().removeIf(game.jumpFeathers()::isJumpFeather);
         }
     }
 
@@ -112,7 +116,7 @@ final class PillarGamePlayerListener implements Listener {
     public void onMove(PlayerMoveEvent event) {
         Player player = event.getPlayer();
         if (event.getTo().getY() < 0.0 && game.isRoundAlive(player)) {
-            game.consumeLife(player, "died", false);
+            game.consumeLife(player, "fell into the void", false);
         }
     }
 
@@ -143,22 +147,33 @@ final class PillarGamePlayerListener implements Listener {
         }
     }
 
+    /**
+     * Round-alive players never go through an actual death/respawn cycle: any
+     * hit that would kill them (PvP, mobs, the void, etc.) is cancelled and
+     * converted into a lost life plus a teleport to whichever pillar is
+     * currently least contested. onDeath is only a fallback for the rare case
+     * something kills a player without going through this event.
+     */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onVoidDamage(EntityDamageEvent event) {
-        if (event.getCause() != EntityDamageEvent.DamageCause.VOID
-                || !(event.getEntity() instanceof Player player)
-                || !game.isGameWorld(player)) {
+    public void onFatalDamage(EntityDamageEvent event) {
+        if (!(event.getEntity() instanceof Player player) || !game.isGameWorld(player)) {
             return;
         }
 
-        if (game.isRoundAlive(player)) {
-            event.setCancelled(true);
-            game.consumeLife(player, "fell into the void", false);
+        boolean voidDamage = event.getCause() == EntityDamageEvent.DamageCause.VOID;
+        if (!game.isRoundAlive(player)) {
+            if (voidDamage && game.settings().rescueFromVoid()) {
+                event.setCancelled(true);
+                game.sendToPillar(player);
+            }
             return;
         }
-        if (game.settings().rescueFromVoid()) {
-            event.setCancelled(true);
-            game.sendToPillar(player);
+
+        if (!voidDamage && event.getFinalDamage() < player.getHealth()) {
+            return;
         }
+
+        event.setCancelled(true);
+        game.consumeLife(player, voidDamage ? "fell into the void" : "took a fatal hit", false);
     }
 }

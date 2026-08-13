@@ -5,6 +5,7 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.Chest;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -42,7 +43,9 @@ final class CenterLootChestService implements Listener {
 
     void start() {
         active = true;
-        Location selected = pillarLocations.get(ThreadLocalRandom.current().nextInt(pillarLocations.size()));
+        List<Location> unoccupied = pillarLocations.stream().filter(this::isUnoccupied).toList();
+        List<Location> candidates = unoccupied.isEmpty() ? pillarLocations : unoccupied;
+        Location selected = candidates.get(ThreadLocalRandom.current().nextInt(candidates.size()));
         chestPosition = BlockPosition.of(selected);
         luckyBlocks.reserveLocation(selected);
         Block chestBlock = blockAt(chestPosition);
@@ -50,6 +53,17 @@ final class CenterLootChestService implements Listener {
         if (chestBlock.getState() instanceof Chest chest) {
             fill(chest.getBlockInventory());
         }
+    }
+
+    /** True when no player is currently standing on the pillar at this location. */
+    private boolean isUnoccupied(Location pillarLocation) {
+        for (Player player : world.getPlayers()) {
+            if (player.getLocation().getBlockX() == pillarLocation.getBlockX()
+                    && player.getLocation().getBlockZ() == pillarLocation.getBlockZ()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     void stop() {

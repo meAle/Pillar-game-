@@ -44,7 +44,7 @@ final class     PillarGame {
     private final PillarGamePlayerListener playerListener;
 
     private BukkitTask gameClockTask;
-    private BukkitTask sidebarTask;
+    private BukkitTask bossBarTask;
     private int currentRoundIndex = -1;
     private int elapsedRoundTicks;
     private int roundStartedAtTick;
@@ -246,6 +246,14 @@ final class     PillarGame {
         player.setFallDistance(0.0F);
     }
 
+    /** Used when a hit would otherwise kill a round-alive player: reassigns them to
+     *  whichever pillar is currently least contested instead of their usual one. */
+    void sendToNextAvailablePillar(Player player) {
+        player.teleport(arena.safestRespawnLocation(player.getUniqueId()));
+        player.setVelocity(new Vector());
+        player.setFallDistance(0.0F);
+    }
+
     void restoreAfterRespawn(Player player) {
         if (!player.isOnline() || !isGameWorld(player)) {
             return;
@@ -287,7 +295,7 @@ final class     PillarGame {
         player.sendActionBar(Component.text("You " + reason + " and have " + livesLeft + " "
                 + (livesLeft == 1 ? "life" : "lives") + " left for the game.", NamedTextColor.RED));
         if (!playerIsDead) {
-            sendToPillar(player);
+            sendToNextAvailablePillar(player);
             jumpFeathers.resetState(player);
         }
     }
@@ -327,7 +335,10 @@ final class     PillarGame {
         beginRound(0);
         gameClockTask = plugin.getServer().getScheduler().runTaskTimer(
                 plugin, this::tickGameClock, clockPeriodTicks, clockPeriodTicks);
-        sidebarTask = plugin.getServer().getScheduler().runTaskTimer(plugin, this::refreshDisplays, 0L, 2L);
+        // The sidebar no longer shows anything sub-second, so it only needs to refresh on
+        // state changes (see the explicit refreshSidebars() calls below); only the boss
+        // bar's countdown needs this fast, fixed-period timer.
+        bossBarTask = plugin.getServer().getScheduler().runTaskTimer(plugin, this::updatePhaseBossBar, 0L, 2L);
     }
 
     private void tickGameClock() {
@@ -532,9 +543,9 @@ final class     PillarGame {
             gameClockTask.cancel();
             gameClockTask = null;
         }
-        if (sidebarTask != null) {
-            sidebarTask.cancel();
-            sidebarTask = null;
+        if (bossBarTask != null) {
+            bossBarTask.cancel();
+            bossBarTask = null;
         }
     }
 
@@ -556,13 +567,7 @@ final class     PillarGame {
         sidebar.refreshAll(snapshot());
     }
 
-    private void refreshDisplays() {
-        updatePhaseBossBar();
-        refreshSidebars();
-    }
-
     private PillarGameSidebarPresenter.RoundSnapshot snapshot() {
-        return new PillarGameSidebarPresenter.RoundSnapshot(
-                gameStarted, gameFinished, currentRoundIndex, roundStartedAtTick);
+        return new PillarGameSidebarPresenter.RoundSnapshot(gameStarted, gameFinished, currentRoundIndex);
     }
 }
