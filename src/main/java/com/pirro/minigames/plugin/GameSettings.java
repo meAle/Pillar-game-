@@ -129,6 +129,26 @@ record GameSettings(
         return firstItemIntervalTicks - itemIntervalReductionTicks * zeroBasedRound;
     }
 
+    /** The largest tick period that evenly divides the round duration and every round's item interval. */
+    int clockPeriodTicks() {
+        int period = roundDurationTicks;
+        for (int round = 0; round < roundCount; round++) {
+            period = greatestCommonDivisor(period, itemIntervalTicksForRound(round));
+        }
+        return period;
+    }
+
+    private static int greatestCommonDivisor(int first, int second) {
+        int left = Math.abs(first);
+        int right = Math.abs(second);
+        while (right != 0) {
+            int remainder = left % right;
+            left = right;
+            right = remainder;
+        }
+        return left;
+    }
+
     private static int rangedInt(
             FileConfiguration config,
             String path,

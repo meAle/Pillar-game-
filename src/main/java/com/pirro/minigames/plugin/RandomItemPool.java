@@ -37,7 +37,7 @@ final class RandomItemPool {
     }
 
     void give(Player player, String label) {
-        ItemType selected = items.get(ThreadLocalRandom.current().nextInt(items.size()));
+        ItemType selected = randomItem();
         PlayerGiveResult result = player.give(selected.createItemStack(1));
         player.sendActionBar(Component.text(label + ": ", NamedTextColor.GREEN)
                 .append(Component.translatable(selected.translationKey()).color(NamedTextColor.GOLD)));

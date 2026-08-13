@@ -1,41 +1,27 @@
 package com.pirro.minigames.plugin;
 
-import io.papermc.paper.event.player.AsyncPlayerSpawnLocationEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
-import org.bukkit.event.EventHandler;
-import org.bukkit.event.EventPriority;
-import org.bukkit.event.Listener;
-import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.entity.PlayerDeathEvent;
-import org.bukkit.event.player.PlayerChangedWorldEvent;
-import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.event.player.PlayerMoveEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
-import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Vector;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
 /**
  * The phase/game state machine: who's alive, which phase is active, when a phase
- * ends, and the player-lifecycle plumbing (join/quit/death/respawn) needed
- * to keep that state correct. Terrain, the jump ability, voting, the
- * sidebar, random items, and win persistence are all delegated to their own
- * classes below.
+ * ends, and the round/game transitions (start, advance, finish, restart) that
+ * follow from it. Bukkit player-lifecycle events are handled by
+ * PillarGamePlayerListener, which calls back into this class's package-private
+ * API. Terrain, the jump ability, voting, the sidebar, random items, and win
+ * persistence are all delegated to their own classes below.
  */
-final class PillarGame implements Listener {
+final class     PillarGame {
     private static final int LIVES_PER_GAME = 3;
 
     private final MiniGames plugin;
@@ -48,13 +34,14 @@ final class PillarGame implements Listener {
     private final RandomItemPool items;
     private final ResultsStore results;
     private final ReadyManager readiness;
-    private final PillarGameSidebar sidebar;
+    private final PillarGameSidebarPresenter sidebar;
     private final PhaseBossBar phaseBossBar;
     private final PlayerLifeManager playerLives;
     private final LuckyBlockService luckyBlocks;
     private final CenterLootChestService centerLootChest;
     private final DroppedItemDespawnService droppedItemDespawn;
     private final EnderDragonMovementService enderDragonMovement;
+    private final PillarGamePlayerListener playerListener;
 
     private BukkitTask gameClockTask;
     private BukkitTask sidebarTask;
@@ -70,12 +57,11 @@ final class PillarGame implements Listener {
         this.plugin = plugin;
         this.world = world;
         this.settings = settings;
-        this.clockPeriodTicks = calculateClockPeriod(settings);
+        this.clockPeriodTicks = settings.clockPeriodTicks();
 
         this.arena = new PillarArena(world, settings);
         this.items = new RandomItemPool(world, settings.excludedItemKeys());
         this.results = new ResultsStore(plugin);
-        this.sidebar = new PillarGameSidebar(world);
         this.phaseBossBar = new PhaseBossBar(world, settings);
         this.playerLives = new PlayerLifeManager(LIVES_PER_GAME);
         this.luckyBlocks = new LuckyBlockService(plugin, world, arena.luckyBlockLocations(), items);
@@ -84,7 +70,10 @@ final class PillarGame implements Listener {
         this.enderDragonMovement = new EnderDragonMovementService(
                 plugin, world, settings, () -> gameStarted && !gameFinished);
         this.readiness = new ReadyManager(plugin, world, this::refreshSidebars, this::startGame);
+        this.sidebar = new PillarGameSidebarPresenter(
+                new PillarGameSidebar(world), settings, playerLives, results, readiness);
         this.jumpFeathers = new JumpFeatherService(plugin, world, settings, this::isRoundAlive, this::currentJumpTier);
+        this.playerListener = new PillarGamePlayerListener(this);
     }
 
     void initialize() {
@@ -92,7 +81,7 @@ final class PillarGame implements Listener {
         plugin.getLogger().info("Random item pool contains " + items.size() + " items and blocks.");
     }
 
-    /** Listeners other than this one that also need to be registered with Bukkit. */
+    /** Listeners other than the player-lifecycle one that also need to be registered with Bukkit. */
     PillarArena arena() {
         return arena;
     }
@@ -119,6 +108,10 @@ final class PillarGame implements Listener {
 
     EnderDragonMovementService enderDragonMovement() {
         return enderDragonMovement;
+    }
+
+    PillarGamePlayerListener playerListener() {
+        return playerListener;
     }
 
     void placeExistingPlayer(Player player) {
@@ -189,148 +182,137 @@ final class PillarGame implements Listener {
     }
 
     // ------------------------------------------------------------------
-    // Player lifecycle
+    // Package-private API used by PillarGamePlayerListener
     // ------------------------------------------------------------------
 
-    @EventHandler
-    public void onInitialSpawn(AsyncPlayerSpawnLocationEvent event) {
-        UUID playerId = event.getConnection().getProfile().getId();
-        if (playerId == null) {
-            String name = event.getConnection().getProfile().getName();
-            playerId = UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(StandardCharsets.UTF_8));
-        }
-        event.setSpawnLocation(arena.spawnLocation(arena.assignSlot(playerId)));
+    MiniGames plugin() {
+        return plugin;
     }
 
-    @EventHandler
-    public void onJoin(PlayerJoinEvent event) {
-        Player player = event.getPlayer();
-        preparePlayerForLobby(player);
-
-        if (gameFinished) {
-            phaseBossBar.hideFrom(player);
-            updateSidebar(player);
-            return;
-        }
-        if (readiness.isOpen()) {
-            player.sendMessage(Component.text("Right-click the dye or use /ready when you are ready.",
-                    NamedTextColor.AQUA));
-            readiness.addPlayer(player);
-            readiness.handlePlayerCountChanged();
-            updateSidebar(player);
-            return;
-        }
-        if (!gameStarted) {
-            startVoting();
-            return;
-        }
-
-        jumpFeathers.removeAll(player);
-        player.setGameMode(GameMode.SPECTATOR);
-        phaseBossBar.showTo(player);
-        updateSidebar(player);
+    World world() {
+        return world;
     }
 
-    @EventHandler
-    public void onQuit(PlayerQuitEvent event) {
-        Player player = event.getPlayer();
-        if (isRoundAlive(player)) {
-            eliminatePlayer(player, "left the game", false);
+    GameSettings settings() {
+        return settings;
+    }
+
+    PlayerLifeManager playerLives() {
+        return playerLives;
+    }
+
+    PhaseBossBar phaseBossBar() {
+        return phaseBossBar;
+    }
+
+    boolean isGameFinished() {
+        return gameFinished;
+    }
+
+    boolean isRoundAlive(Player player) {
+        return gameStarted && !gameFinished && isGameWorld(player)
+                && playerLives.isAlive(player.getUniqueId());
+    }
+
+    void updateSidebar(Player player) {
+        if (!isGameWorld(player)) {
+            return;
         }
-        UUID playerId = player.getUniqueId();
-        arena.forgetAssignment(playerId);
-        readiness.forgetPlayer(playerId);
-        plugin.getServer().getScheduler().runTask(plugin, readiness::handlePlayerCountChanged);
-        jumpFeathers.clearState(player);
-        playerLives.forgetPendingSpectator(playerId);
+        sidebar.update(player, snapshot());
+    }
+
+    void forgetSidebar(Player player) {
         sidebar.remove(player);
     }
 
-    @EventHandler
-    public void onRespawn(PlayerRespawnEvent event) {
-        Player player = event.getPlayer();
-        if (!isGameWorld(player) && !playerLives.hasParticipant(player.getUniqueId())) {
-            return;
-        }
-
-        event.setRespawnLocation(arena.safestRespawnLocation(player.getUniqueId()));
-        plugin.getServer().getScheduler().runTask(plugin, () -> restoreAfterRespawn(player));
-    }
-
-    @EventHandler
-    public void onDeath(PlayerDeathEvent event) {
-        Player player = event.getPlayer();
-        jumpFeathers.clearState(player);
-        event.getDrops().removeIf(jumpFeathers::isJumpFeather);
-        if (isRoundAlive(player)) {
-            consumeLife(player, "died", true);
-        }
-    }
-
-    @EventHandler(ignoreCancelled = true)
-    public void onMove(PlayerMoveEvent event) {
-        Player player = event.getPlayer();
-        if (event.getTo().getY() < 0.0 && isRoundAlive(player)) {
-            consumeLife(player, "died", false);
-        }
-    }
-
-    @EventHandler
-    public void onChangedWorld(PlayerChangedWorldEvent event) {
-        Player player = event.getPlayer();
-        jumpFeathers.clearState(player);
-        if (event.getFrom().getUID().equals(world.getUID()) && !isGameWorld(player)
-                && playerLives.hasParticipant(player.getUniqueId())
-                && !playerLives.isEliminated(player.getUniqueId())) {
-            eliminatePlayer(player, "left the arena", false);
-        }
-        if (isGameWorld(player)) {
-            if (gameStarted && !gameFinished) {
-                phaseBossBar.showTo(player);
-            } else {
-                phaseBossBar.hideFrom(player);
-            }
-            if (isRoundAlive(player)) {
-                jumpFeathers.synchronize(player);
-            }
-            updateSidebar(player);
-        } else {
-            phaseBossBar.hideFrom(player);
-            jumpFeathers.removeAll(player);
-            player.setScoreboard(Bukkit.getScoreboardManager().getMainScoreboard());
-            sidebar.remove(player);
-        }
-    }
-
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onVoidDamage(EntityDamageEvent event) {
-        if (event.getCause() != EntityDamageEvent.DamageCause.VOID
-                || !(event.getEntity() instanceof Player player)
-                || !isGameWorld(player)) {
-            return;
-        }
-
-        if (isRoundAlive(player)) {
-            event.setCancelled(true);
-            consumeLife(player, "fell into the void", false);
-            return;
-        }
-        if (settings.rescueFromVoid()) {
-            event.setCancelled(true);
-            sendToPillar(player);
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Voting -> round/game state machine
-    // ------------------------------------------------------------------
-
-    private void startVoting() {
+    void startVoting() {
         if (world.getPlayers().size() < 2 || readiness.isOpen() || gameStarted || gameFinished) {
             return;
         }
         readiness.start();
     }
+
+    void preparePlayerForLobby(Player player) {
+        int slot = arena.assignSlot(player.getUniqueId());
+        player.teleport(arena.spawnLocation(slot));
+        player.setVelocity(new Vector());
+        player.setFallDistance(0.0F);
+        updateSidebar(player);
+    }
+
+    void sendToPillar(Player player) {
+        player.teleport(arena.spawnLocation(arena.assignSlot(player.getUniqueId())));
+        player.setVelocity(new Vector());
+        player.setFallDistance(0.0F);
+    }
+
+    void restoreAfterRespawn(Player player) {
+        if (!player.isOnline() || !isGameWorld(player)) {
+            return;
+        }
+        if (!gameStarted && readiness.isOpen()) {
+            player.setGameMode(GameMode.SURVIVAL);
+            sendToPillar(player);
+            jumpFeathers.removeAll(player);
+            readiness.addPlayer(player);
+            updateSidebar(player);
+            return;
+        }
+        UUID playerId = player.getUniqueId();
+        if (playerLives.consumePendingSpectator(playerId) || playerLives.isEliminated(playerId)) {
+            player.setGameMode(GameMode.SPECTATOR);
+            sendToPillar(player);
+            jumpFeathers.removeAll(player);
+            return;
+        }
+        if (isRoundAlive(player)) {
+            player.setGameMode(GameMode.SURVIVAL);
+            jumpFeathers.resetState(player);
+            jumpFeathers.synchronize(player);
+        }
+    }
+
+    void consumeLife(Player player, String reason, boolean playerIsDead) {
+        if (!isRoundAlive(player) || roundResolved) {
+            return;
+        }
+
+        int livesLeft = playerLives.consumeLife(player.getUniqueId());
+        refreshSidebars();
+        if (livesLeft == 0) {
+            eliminatePlayer(player, reason, playerIsDead);
+            return;
+        }
+
+        player.sendActionBar(Component.text("You " + reason + " and have " + livesLeft + " "
+                + (livesLeft == 1 ? "life" : "lives") + " left for the game.", NamedTextColor.RED));
+        if (!playerIsDead) {
+            sendToPillar(player);
+            jumpFeathers.resetState(player);
+        }
+    }
+
+    void eliminatePlayer(Player player, String reason, boolean playerIsDead) {
+        UUID playerId = player.getUniqueId();
+        if (!playerLives.eliminate(playerId)) {
+            return;
+        }
+
+        jumpFeathers.removeAll(player);
+        jumpFeathers.clearState(player);
+        if (playerIsDead) {
+            playerLives.markPendingSpectator(playerId);
+        } else if (player.isOnline()) {
+            player.setGameMode(GameMode.SPECTATOR);
+            sendToPillar(player);
+        }
+        broadcast(Component.text(player.getName() + " " + reason + " and is out for the game.", NamedTextColor.RED));
+        checkForGameWinner();
+    }
+
+    // ------------------------------------------------------------------
+    // Voting -> round/game state machine
+    // ------------------------------------------------------------------
 
     private void startGame() {
         if (gameStarted || gameFinished) {
@@ -386,16 +368,9 @@ final class PillarGame implements Listener {
         phaseBossBar.showToAll();
 
         if (zeroBasedRound == 0) {
-            playerLives.clearParticipants();
+            // Reached right after playerLives.reset() in startGame(), so every online
+            // player starts round 0 as a fresh participant with a full life count.
             for (Player player : List.copyOf(world.getPlayers())) {
-                if (playerLives.lives(player.getUniqueId()) < 1
-                        && playerLives.hasParticipant(player.getUniqueId())) {
-                    if (!player.isDead()) {
-                        player.setGameMode(GameMode.SPECTATOR);
-                        jumpFeathers.removeAll(player);
-                    }
-                    continue;
-                }
                 playerLives.addParticipant(player.getUniqueId());
                 player.setGameMode(GameMode.SURVIVAL);
                 sendToPillar(player);
@@ -452,44 +427,6 @@ final class PillarGame implements Listener {
         restartGame();
     }
 
-    private void consumeLife(Player player, String reason, boolean playerIsDead) {
-        if (!isRoundAlive(player) || roundResolved) {
-            return;
-        }
-
-        int livesLeft = playerLives.consumeLife(player.getUniqueId());
-        refreshSidebars();
-        if (livesLeft == 0) {
-            eliminatePlayer(player, reason, playerIsDead);
-            return;
-        }
-
-        player.sendActionBar(Component.text("You " + reason + " and have " + livesLeft + " "
-                + (livesLeft == 1 ? "life" : "lives") + " left for the game.", NamedTextColor.RED));
-        if (!playerIsDead) {
-            sendToPillar(player);
-            jumpFeathers.resetState(player);
-        }
-    }
-
-    private void eliminatePlayer(Player player, String reason, boolean playerIsDead) {
-        UUID playerId = player.getUniqueId();
-        if (!playerLives.eliminate(playerId)) {
-            return;
-        }
-
-        jumpFeathers.removeAll(player);
-        jumpFeathers.clearState(player);
-        if (playerIsDead) {
-            playerLives.markPendingSpectator(playerId);
-        } else if (player.isOnline()) {
-            player.setGameMode(GameMode.SPECTATOR);
-            sendToPillar(player);
-        }
-        broadcast(Component.text(player.getName() + " " + reason + " and is out for the game.", NamedTextColor.RED));
-        checkForGameWinner();
-    }
-
     private void checkForGameWinner() {
         if (roundResolved || !playerLives.hasParticipants()) {
             return;
@@ -529,32 +466,6 @@ final class PillarGame implements Listener {
         return world.getPlayers().stream()
                 .filter(this::isRoundAlive)
                 .toList();
-    }
-
-    private void restoreAfterRespawn(Player player) {
-        if (!player.isOnline() || !isGameWorld(player)) {
-            return;
-        }
-        if (!gameStarted && readiness.isOpen()) {
-            player.setGameMode(GameMode.SURVIVAL);
-            sendToPillar(player);
-            jumpFeathers.removeAll(player);
-            readiness.addPlayer(player);
-            updateSidebar(player);
-            return;
-        }
-        UUID playerId = player.getUniqueId();
-        if (playerLives.consumePendingSpectator(playerId) || playerLives.isEliminated(playerId)) {
-            player.setGameMode(GameMode.SPECTATOR);
-            sendToPillar(player);
-            jumpFeathers.removeAll(player);
-            return;
-        }
-        if (isRoundAlive(player)) {
-            player.setGameMode(GameMode.SURVIVAL);
-            jumpFeathers.resetState(player);
-            jumpFeathers.synchronize(player);
-        }
     }
 
     void restartGame() {
@@ -603,25 +514,6 @@ final class PillarGame implements Listener {
         }
     }
 
-    private void preparePlayerForLobby(Player player) {
-        int slot = arena.assignSlot(player.getUniqueId());
-        player.teleport(arena.spawnLocation(slot));
-        player.setVelocity(new Vector());
-        player.setFallDistance(0.0F);
-        updateSidebar(player);
-    }
-
-    private void sendToPillar(Player player) {
-        player.teleport(arena.spawnLocation(arena.assignSlot(player.getUniqueId())));
-        player.setVelocity(new Vector());
-        player.setFallDistance(0.0F);
-    }
-
-    private boolean isRoundAlive(Player player) {
-        return gameStarted && !gameFinished && isGameWorld(player)
-                && playerLives.isAlive(player.getUniqueId());
-    }
-
     private int currentJumpTier() {
         if (!gameStarted || gameFinished) {
             return 0;
@@ -661,7 +553,7 @@ final class PillarGame implements Listener {
     }
 
     private void refreshSidebars() {
-        sidebar.refreshAll(this::sidebarLines);
+        sidebar.refreshAll(snapshot());
     }
 
     private void refreshDisplays() {
@@ -669,58 +561,8 @@ final class PillarGame implements Listener {
         refreshSidebars();
     }
 
-    private void updateSidebar(Player player) {
-        if (!isGameWorld(player)) {
-            return;
-        }
-        sidebar.update(player, sidebarLines(player));
+    private PillarGameSidebarPresenter.RoundSnapshot snapshot() {
+        return new PillarGameSidebarPresenter.RoundSnapshot(
+                gameStarted, gameFinished, currentRoundIndex, roundStartedAtTick);
     }
-
-    private List<String> sidebarLines(Player player) {
-        List<String> lines = new ArrayList<>();
-        UUID playerId = player.getUniqueId();
-        lines.add("Win streak: " + results.getCurrentStreak(playerId));
-        lines.add("Best streak: " + results.getBestStreak(playerId));
-        ResultsStore.StreakLeader leader = results.getStreakLeader();
-        lines.add("Streak leader: " + leader.playerName() + " " + leader.streak());
-
-        if (gameStarted && !gameFinished) {
-            int intervalTicks = settings.itemIntervalTicksForRound(currentRoundIndex);
-            int elapsedSinceItem = Math.floorMod(Bukkit.getCurrentTick() - roundStartedAtTick, intervalTicks);
-            int nextItemTicks = elapsedSinceItem == 0 ? intervalTicks : intervalTicks - elapsedSinceItem;
-
-            lines.add("Phase: " + (currentRoundIndex + 1) + "/" + settings.roundCount());
-            lines.add("Lives: " + playerLives.lives(playerId));
-            lines.add("Next item: " + formatTenths(nextItemTicks) + "s");
-        } else if (readiness.isOpen()) {
-            lines.add("Ready: " + readiness.readyCount() + "/" + readiness.requiredReadyCount());
-        }
-        return lines;
-    }
-
-    private static int calculateClockPeriod(GameSettings settings) {
-        int period = settings.roundDurationTicks();
-        for (int round = 0; round < settings.roundCount(); round++) {
-            period = greatestCommonDivisor(period, settings.itemIntervalTicksForRound(round));
-        }
-        return period;
-    }
-
-    private static int greatestCommonDivisor(int first, int second) {
-        int left = Math.abs(first);
-        int right = Math.abs(second);
-        while (right != 0) {
-            int remainder = left % right;
-            left = right;
-            right = remainder;
-        }
-        return left;
-    }
-
-    private static String formatTenths(int ticks) {
-        return BigDecimal.valueOf(ticks)
-                .divide(BigDecimal.valueOf(20), 1, RoundingMode.DOWN)
-                .toPlainString();
-    }
-
 }

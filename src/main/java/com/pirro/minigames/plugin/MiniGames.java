@@ -23,7 +23,7 @@ public final class MiniGames extends JavaPlugin {
             pillarGame = new PillarGame(this, gameWorld, settings);
             pillarGame.initialize();
 
-            getServer().getPluginManager().registerEvents(pillarGame, this);
+            getServer().getPluginManager().registerEvents(pillarGame.playerListener(), this);
             getServer().getPluginManager().registerEvents(pillarGame.arena(), this);
             getServer().getPluginManager().registerEvents(pillarGame.jumpFeathers(), this);
             getServer().getPluginManager().registerEvents(pillarGame.readiness(), this);

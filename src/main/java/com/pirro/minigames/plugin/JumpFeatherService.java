@@ -370,7 +370,10 @@ final class JumpFeatherService implements Listener {
     }
 
     private boolean isJumpAbilityActive(Player player) {
-        return availableJumpTier(player) >= 2 && aliveCheck.test(player) && !player.isDead();
+        // aliveCheck (a cheap world/state check) runs before the inventory + PDC read in
+        // availableJumpTier, since this gates PlayerMoveEvent/PlayerJumpEvent for every
+        // player on the server, not just those in the arena.
+        return aliveCheck.test(player) && !player.isDead() && availableJumpTier(player) >= 2;
     }
 
     private int availableJumpTier(Player player) {
