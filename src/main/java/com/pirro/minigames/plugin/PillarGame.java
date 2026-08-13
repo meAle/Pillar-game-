@@ -387,6 +387,7 @@ final class     PillarGame {
             // player starts round 0 as a fresh participant with a full life count.
             for (Player player : List.copyOf(world.getPlayers())) {
                 playerLives.addParticipant(player.getUniqueId());
+                player.getInventory().clear();
                 player.setGameMode(GameMode.SURVIVAL);
                 sendToPillar(player);
                 jumpFeathers.synchronize(player);
