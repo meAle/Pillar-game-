@@ -60,7 +60,7 @@ final class     PillarGame {
         this.clockPeriodTicks = settings.clockPeriodTicks();
 
         this.arena = new PillarArena(world, settings);
-        this.items = new RandomItemPool(world, settings.excludedItemKeys());
+        this.items = new RandomItemPool(world, settings);
         this.results = new ResultsStore(plugin);
         this.phaseBossBar = new PhaseBossBar(world, settings);
         this.playerLives = new PlayerLifeManager(LIVES_PER_GAME);
@@ -327,6 +327,10 @@ final class     PillarGame {
             return;
         }
 
+        // Players can build during the lobby/ready-check window; wipe that before the
+        // round actually begins instead of only wiping on the next restart.
+        wipeArena();
+
         gameStarted = true;
         playerLives.reset();
         replenishPlayers();
@@ -494,14 +498,7 @@ final class     PillarGame {
         centerLootChest.stop();
         arena.clearAssignments();
         phaseBossBar.hideFromAll();
-
-        arena.clearAllNonPillarBlocks();
-        for (org.bukkit.entity.Entity entity : List.copyOf(world.getEntities())) {
-            if (!(entity instanceof Player)) {
-                entity.remove();
-            }
-        }
-        arena.ensurePillars();
+        wipeArena();
 
         for (Player player : world.getPlayers()) {
             player.getInventory().clear();
@@ -509,6 +506,18 @@ final class     PillarGame {
             sendToPillar(player);
         }
         startVoting();
+    }
+
+    /** Clears every non-pillar block placed since the last wipe, removes stray entities
+     *  (dropped items, arrows, item frames, etc.), and re-places the pillars. */
+    private void wipeArena() {
+        arena.clearAllNonPillarBlocks();
+        for (org.bukkit.entity.Entity entity : List.copyOf(world.getEntities())) {
+            if (!(entity instanceof Player)) {
+                entity.remove();
+            }
+        }
+        arena.ensurePillars();
     }
 
     // ------------------------------------------------------------------

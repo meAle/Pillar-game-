@@ -23,6 +23,7 @@ import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.util.Vector;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -42,6 +43,12 @@ final class PillarArena implements Listener {
     private static final int PILLAR_COUNT = 8;
     private static final int[] SLOT_ORDER = {0, 4, 2, 6, 1, 5, 3, 7};
     private static final double SAFE_SPAWN_RADIUS_SQUARED = 10.0 * 10.0;
+    // Bounds for the one-time startup sweep in clearLeftoverBlocksFromPreviousSession():
+    // generous enough to catch realistic player builds around the pillars, bounded enough
+    // to keep the one-off scan fast.
+    private static final int STARTUP_WIPE_HORIZONTAL_MARGIN = 32;
+    private static final int STARTUP_WIPE_BELOW_MARGIN = 8;
+    private static final int STARTUP_WIPE_ABOVE_MARGIN = 48;
 
     private final World world;
     private final GameSettings settings;
@@ -59,7 +66,43 @@ final class PillarArena implements Listener {
 
     void initialize() {
         ensurePillars();
+        clearLeftoverBlocksFromPreviousSession();
         world.setSpawnLocation(spawnLocation(0));
+    }
+
+    /**
+     * clearAllNonPillarBlocks() only clears blocks tracked via placement events during the
+     * current server session - after a server restart that in-memory record is empty even
+     * though the world file on disk still has whatever was left standing. This runs once at
+     * startup (after ensurePillars() so protectedPillarBlocks is already populated) and scans
+     * a bounded region around the pillars instead, so a restart doesn't leave old builds behind.
+     */
+    private void clearLeftoverBlocksFromPreviousSession() {
+        int halfWidth = settings.pillarRadius() + STARTUP_WIPE_HORIZONTAL_MARGIN;
+        int bottomY = Math.max(world.getMinHeight(),
+                settings.pillarTopY() - settings.bedrockHeight() - STARTUP_WIPE_BELOW_MARGIN);
+        int topY = Math.min(world.getMaxHeight() - 1, settings.pillarTopY() + STARTUP_WIPE_ABOVE_MARGIN);
+
+        for (int x = -halfWidth; x <= halfWidth; x++) {
+            for (int z = -halfWidth; z <= halfWidth; z++) {
+                for (int y = bottomY; y <= topY; y++) {
+                    BlockPosition position = new BlockPosition(x, y, z);
+                    if (protectedPillarBlocks.contains(position)) {
+                        continue;
+                    }
+                    Block block = blockAt(position);
+                    if (!block.getType().isAir()) {
+                        block.setType(Material.AIR, false);
+                    }
+                }
+            }
+        }
+
+        for (Entity entity : world.getEntities()) {
+            if (!(entity instanceof Player)) {
+                entity.remove();
+            }
+        }
     }
 
     void ensurePillars() {

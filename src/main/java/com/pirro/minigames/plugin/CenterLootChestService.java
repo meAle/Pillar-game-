@@ -112,6 +112,7 @@ final class CenterLootChestService implements Listener {
                 new ItemStack(Material.ARROW, 32),
                 new ItemStack(Material.COBWEB, 8)
         ));
+        combatLoot.forEach(EquipmentEnchantments::applyMaximumCompatibleEnchantments);
         Collections.shuffle(combatLoot, ThreadLocalRandom.current());
 
         List<ItemStack> blockStacks = new ArrayList<>(List.of(

@@ -43,12 +43,14 @@ final class LuckyBlockService implements Listener {
     void start() {
         active = true;
         inventoryRewards.clear();
+        items.resetLuckyHistory();
         positions.forEach(this::placeLuckyBlock);
     }
 
     void stop() {
         active = false;
         inventoryRewards.clear();
+        items.resetLuckyHistory();
         for (BlockPosition position : positions) {
             Block block = blockAt(position);
             if (block.getType() == Material.OAK_LEAVES) {
@@ -88,7 +90,7 @@ final class LuckyBlockService implements Listener {
             items.giveLucky(event.getPlayer(), "Lucky Block");
             inventoryRewards.put(event.getPlayer().getUniqueId(), rewardsReceived + 1);
         } else {
-            items.dropLucky(block.getLocation().add(0.5, 0.5, 0.5));
+            items.dropLucky(block.getLocation().add(0.5, 0.5, 0.5), event.getPlayer().getUniqueId());
         }
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             if (active && blockAt(position).getType().isAir()) {

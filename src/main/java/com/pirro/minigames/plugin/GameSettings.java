@@ -1,8 +1,12 @@
 package com.pirro.minigames.plugin;
 
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 
+import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -21,8 +25,52 @@ record GameSettings(
         double jumpVelocity,
         double jumpForwardVelocity,
         int jumpClickCooldownTicks,
-        Set<String> excludedItemKeys
+        Set<String> excludedItemKeys,
+        Map<ItemCategory, Integer> timedCategoryWeights,
+        Map<ItemCategory, Integer> luckyCategoryWeights,
+        Map<String, Integer> jackpotItemWeights
 ) {
+    // random-items.timed-weights defaults: normal timed-phase rewards use balanced category weights.
+    private static final Map<ItemCategory, Integer> DEFAULT_TIMED_WEIGHTS = Map.of(
+            ItemCategory.BLOCKS, 30,
+            ItemCategory.WEAPONS, 15,
+            ItemCategory.ARMOR, 10,
+            ItemCategory.TOOLS, 10,
+            ItemCategory.FOOD, 15,
+            ItemCategory.PROJECTILES, 8,
+            ItemCategory.UTILITY, 8,
+            ItemCategory.CHAOS, 4
+    );
+
+    // random-items.lucky-weights defaults: tuned for roughly one lucky-block break per player
+    // per second, so blocks/food dominate and equipment/jackpot stay rare.
+    private static final Map<ItemCategory, Integer> DEFAULT_LUCKY_WEIGHTS = Map.of(
+            ItemCategory.BLOCKS, 5500,
+            ItemCategory.FOOD, 2000,
+            ItemCategory.PROJECTILES, 1200,
+            ItemCategory.UTILITY, 1000,
+            ItemCategory.TOOLS, 150,
+            ItemCategory.WEAPONS, 100,
+            ItemCategory.ARMOR, 40,
+            ItemCategory.JACKPOT, 10
+    );
+
+    // random-items.jackpot-items defaults: the weighted table rolled when a lucky-block break
+    // lands on the JACKPOT category.
+    private static final Map<String, Integer> DEFAULT_JACKPOT_WEIGHTS = defaultJackpotWeights();
+
+    private static Map<String, Integer> defaultJackpotWeights() {
+        Map<String, Integer> defaults = new LinkedHashMap<>();
+        defaults.put("totem_of_undying", 30);
+        defaults.put("enchanted_golden_apple", 25);
+        defaults.put("netherite_chestplate", 12);
+        defaults.put("netherite_sword", 10);
+        defaults.put("mace", 12);
+        defaults.put("trident", 8);
+        defaults.put("ender_pearl", 3);
+        return Map.copyOf(defaults);
+    }
+
     static GameSettings from(FileConfiguration config) {
         String worldName = config.getString("world.name", "oneblock_void").trim();
         if (worldName.isBlank() || worldName.contains("/") || worldName.contains("\\")) {
@@ -105,6 +153,12 @@ record GameSettings(
         Set<String> exclusions = config.getStringList("random-items.excluded").stream()
                 .map(GameSettings::normalizeItemKey)
                 .collect(Collectors.toUnmodifiableSet());
+        Map<ItemCategory, Integer> timedWeights = readCategoryWeights(
+                config, "random-items.timed-weights", DEFAULT_TIMED_WEIGHTS);
+        Map<ItemCategory, Integer> luckyWeights = readCategoryWeights(
+                config, "random-items.lucky-weights", DEFAULT_LUCKY_WEIGHTS);
+        Map<String, Integer> jackpotWeights = readJackpotWeights(
+                config, "random-items.jackpot-items", DEFAULT_JACKPOT_WEIGHTS);
 
         return new GameSettings(
                 worldName,
@@ -121,7 +175,10 @@ record GameSettings(
                 jumpVelocity,
                 jumpForwardVelocity,
                 clickCooldownTicks,
-                exclusions
+                exclusions,
+                timedWeights,
+                luckyWeights,
+                jackpotWeights
         );
     }
 
@@ -147,6 +204,48 @@ record GameSettings(
             right = remainder;
         }
         return left;
+    }
+
+    /**
+     * Reads a category-weight table, falling back to defaultWeights per-key so a config that
+     * only overrides one or two categories doesn't have to restate the whole table (and a
+     * config that omits the section entirely - the pre-existing-config case - uses it as-is).
+     */
+    private static Map<ItemCategory, Integer> readCategoryWeights(
+            FileConfiguration config,
+            String path,
+            Map<ItemCategory, Integer> defaultWeights
+    ) {
+        Map<ItemCategory, Integer> weights = new EnumMap<>(ItemCategory.class);
+        for (Map.Entry<ItemCategory, Integer> entry : defaultWeights.entrySet()) {
+            String key = path + "." + entry.getKey().configKey();
+            int value = config.getInt(key, entry.getValue());
+            if (value < 0) {
+                throw new IllegalArgumentException(key + " must not be negative");
+            }
+            weights.put(entry.getKey(), value);
+        }
+        return Map.copyOf(weights);
+    }
+
+    /** Same per-key-fallback approach as readCategoryWeights, but also allows new item keys. */
+    private static Map<String, Integer> readJackpotWeights(
+            FileConfiguration config,
+            String path,
+            Map<String, Integer> defaultWeights
+    ) {
+        Map<String, Integer> weights = new LinkedHashMap<>(defaultWeights);
+        ConfigurationSection section = config.getConfigurationSection(path);
+        if (section != null) {
+            for (String rawKey : section.getKeys(false)) {
+                int value = section.getInt(rawKey);
+                if (value < 0) {
+                    throw new IllegalArgumentException(path + "." + rawKey + " must not be negative");
+                }
+                weights.put(normalizeItemKey(rawKey), value);
+            }
+        }
+        return Map.copyOf(weights);
     }
 
     private static int rangedInt(

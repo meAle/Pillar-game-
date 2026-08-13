@@ -7,7 +7,7 @@ world:
 # the support below the permanent bedrock block players stand on at top-y.
 pillars:
   top-y: 96
-  radius: 32
+  radius: 24
   bedrock-height: 8
 
 # Five phases run for 70 seconds each, except the final phase, which continues
